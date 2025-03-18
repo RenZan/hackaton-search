@@ -363,7 +363,7 @@ def generate_report(initial_query, all_learnings, knowledge):
         f"Tu es un expert en rédaction. La date actuelle est {CURRENT_DATE}. "
         f"Rédige un rapport synthétique et structuré répondant à '{initial_query}', à destination d'un décideur de l'entreprise "
         f"basé sur les informations fournies, pertinentes à {CURRENT_DATE}. "
-        "Ajoute une synthèse finale."
+        "Ajoute une synthèse finale. L'intégralité du rapport doit être en anglais."
     )
     logger.info(user_prompt)
     payload = {
@@ -400,7 +400,7 @@ if __name__ == "__main__":
         # Log de la requête reçue
         logger.info(f"Requête reçue : {initial_query}")
         # Simuler une recherche approfondie
-        structured_data, report = deep_research(initial_query, breadth=5, depth=2, time_limit=120)
+        structured_data, report = deep_research(initial_query, breadth=3, depth=3, time_limit=120)
         # Afficher les résultats
         print("\n### Données Structurées ###")
         print(json.dumps(structured_data, indent=4, ensure_ascii=False))
