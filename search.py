@@ -320,7 +320,11 @@ def generate_report(initial_query, all_learnings):
 # Point d'entrée
 if __name__ == "__main__":
     try:
-        initial_query = input("Entrez le sujet de recherche initial : ")
+        if len(sys.argv) < 2:
+            logger.error("Erreur : Aucun argument fourni. Usage : python search.py \"votre requête\"")
+            sys.exit(1)
+        
+        initial_query = sys.argv[1]  # Récupère le premier argument passé au script
         structured_data, report = deep_research(initial_query, breadth=5, depth=5, time_limit=180)
         print("\n### Données Structurées ###")
         print(json.dumps(structured_data, indent=4, ensure_ascii=False))
@@ -329,3 +333,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logger.info("Script arrêté par l'utilisateur avec Ctrl+C.")
         sys.exit(0)
+    except Exception as e:
+        logger.error(f"Erreur inattendue : {e}")
+        sys.exit(1)
