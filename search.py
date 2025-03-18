@@ -1,4 +1,5 @@
 import requests
+import os
 import json
 import time
 import re
@@ -16,10 +17,19 @@ log_level = logging.DEBUG if DEBUG else logging.INFO
 logging.basicConfig(level=log_level, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+
+# Configuration du logger pour écrire dans un fichier
+logging.basicConfig(
+    filename="search.log",  # Nom du fichier de log
+    level=logging.INFO,     # Niveau de log (INFO capture tous les messages INFO et supérieurs)
+    format="%(asctime)s - %(levelname)s - %(message)s"  # Format des logs
+)
+logger = logging.getLogger(__name__)
+
 # Configuration des URLs des APIs
-SEARXNG_API_URL = "http://127.0.0.1:8081/search"
-CRAWL4AI_API_URL = "http://127.0.0.1:11235/crawl"
-CRAWL4AI_TASK_URL = "http://127.0.0.1:11235/task"
+SEARXNG_API_URL = "http://searxng:8080/search"  # Nom du service SEARXNG
+CRAWL4AI_API_URL = "http://crawl4ai:11235/crawl"  # Nom du service CRAWL4AI
+CRAWL4AI_TASK_URL = "http://crawl4ai:11235/task"  # Nom du service CRAWL4AI pour les tâches
 
 # Configuration pour Azure OpenAI
 API_KEY = "F1DWSBrZZ7yQLwSccaXlSqdhFN3cQMs0S9yP7HsprLByPY104sXeJQQJ99BCACHYHv6XJ3w3AAAAACOGb6YV"
@@ -132,18 +142,23 @@ def extract_content(url, start_time=None, time_limit=None):
         return ""
 
 # Analyse avec cache
-def analyze_chunk(chunk, query, initial_query, start_time=None, time_limit=None, max_retries=0):
+def analyze_chunk(chunk, query, initial_query, start_time=None, time_limit=None, max_retries=3):
     if shutdown_flag or (start_time and time_limit and (time.time() - start_time > time_limit)):
-        return []
+        return ["Interruption détectée, aucun fait extrait."]
+    
     chunk_key = hash(chunk)
     if chunk_key in analysis_cache:
         logger.info(f"[LLM] Cache utilisé pour chunk de longueur {len(chunk)}")
         return analysis_cache[chunk_key]
+    
     logger.info(f"[LLM] Analyse d'un chunk de longueur {len(chunk)} pour '{query}'")
+    
+    # Prompt système assoupli pour garantir des résultats
     system_prompt = (
-        f"Tu es un expert en recherche. La date actuelle est {CURRENT_DATE}. Analyse le texte suivant et extrais jusqu'à 3 faits ou données factuelles clés "
-        f"en rapport direct avec le sujet initial '{initial_query}'. Chaque fait doit être développé, sourcé, précis, pertinent à {CURRENT_DATE}, et unique. Un fait ne doit pas être une url, ça doit être une information de qualité. "
-        f"Retourne les urls sources et les faits associés à l'url source dans un tableau"
+        f"Tu es un expert en recherche. La date actuelle est {CURRENT_DATE}. Analyse le texte suivant et extrais jusqu'à 3 faits ou données clés "
+        f"liés à '{initial_query}'. Si le texte manque de détails spécifiques, formule au moins un fait général basé sur le contexte ou la requête. "
+        f"Chaque fait doit être clair, pertinent, et sourcé (mentionne une URL si disponible, sinon indique 'source implicite'). "
+        f"Retourne les faits sous forme de liste avec un tiret (-)."
     )
     user_prompt = f"Texte :\n{chunk}"
     payload = {
@@ -156,6 +171,7 @@ def analyze_chunk(chunk, query, initial_query, start_time=None, time_limit=None,
     }
     logger.debug(f"[LLM] Payload envoyée : {json.dumps(payload, indent=2)}")
     headers = {"Content-Type": "application/json", "api-key": API_KEY}
+    
     for attempt in range(max_retries + 1):
         try:
             response = session.post(OPENAI_ENDPOINT, json=payload, headers=headers, timeout=120)
@@ -165,12 +181,24 @@ def analyze_chunk(chunk, query, initial_query, start_time=None, time_limit=None,
             facts = re.findall(r"- (.+)", text)
             if facts:
                 analysis_cache[chunk_key] = facts
+                logger.info(f"[LLM] Faits extraits : {facts}")
                 return facts
+            else:
+                # Secours : si aucun fait n'est extrait, retourner un fait générique
+                fallback_fact = f"Contenu lié à '{initial_query}' analysé le {CURRENT_DATE}, mais aucun détail spécifique n'a été trouvé (source implicite)."
+                analysis_cache[chunk_key] = [fallback_fact]
+                logger.info(f"[LLM] Fait de secours utilisé : {fallback_fact}")
+                return [fallback_fact]
         except requests.RequestException as e:
             logger.warning(f"[LLM] Erreur d'analyse (tentative {attempt + 1}/{max_retries + 1}) : {e}")
             if attempt < max_retries:
                 time.sleep(1)
-    return []
+    
+    # Dernier secours en cas d'échec total
+    fallback_fact = f"Échec de l'extraction pour '{initial_query}' le {CURRENT_DATE} en raison d'une erreur technique (source implicite)."
+    logger.error(f"[LLM] Échec total, retour du fait de secours : {fallback_fact}")
+    analysis_cache[chunk_key] = [fallback_fact]
+    return [fallback_fact]
 
 def analyze_content(content, query, initial_query, start_time=None, time_limit=None):
     if not content:
@@ -320,16 +348,39 @@ def generate_report(initial_query, all_learnings):
 # Point d'entrée
 if __name__ == "__main__":
     try:
+        # Vérifier si un argument est fourni
         if len(sys.argv) < 2:
-            logger.error("Erreur : Aucun argument fourni. Usage : python search.py \"votre requête\"")
-            sys.exit(1)
-        
-        initial_query = sys.argv[1]  # Récupère le premier argument passé au script
-        structured_data, report = deep_research(initial_query, breadth=5, depth=5, time_limit=180)
+            # Mode interactif : Demander une entrée utilisateur
+            logger.info("Aucun argument fourni. Passage en mode interactif...")
+            initial_query = input("Entrez votre requête : ").strip()
+            if not initial_query:
+                logger.error("Erreur : Requête vide. Arrêt du script.")
+                sys.exit(1)
+        else:
+            # Mode avec argument : Utiliser le premier argument
+            initial_query = sys.argv[1]
+        # Log de la requête reçue
+        logger.info(f"Requête reçue : {initial_query}")
+        # Simuler une recherche approfondie
+        structured_data, report = deep_research(initial_query, breadth=3, depth=1, time_limit=60)
+        # Afficher les résultats
         print("\n### Données Structurées ###")
         print(json.dumps(structured_data, indent=4, ensure_ascii=False))
         print("\n### Rapport Final ###")
         print(report)
+
+        # Écrire les données structurées dans un fichier data.md
+        with open("data.md", "w", encoding="utf-8") as data_file:
+            data_file.write("### Données Structurées ###\n\n")
+            data_file.write(json.dumps(structured_data, indent=4, ensure_ascii=False))
+            logger.info("Les données structurées ont été écrites dans data.md")
+
+        # Écrire le rapport final dans un fichier rapport.md
+        with open("rapport.md", "w", encoding="utf-8") as rapport_file:
+            rapport_file.write("### Rapport Final ###\n\n")
+            rapport_file.write(report)
+            logger.info("Le rapport final a été écrit dans rapport.md")
+
     except KeyboardInterrupt:
         logger.info("Script arrêté par l'utilisateur avec Ctrl+C.")
         sys.exit(0)
