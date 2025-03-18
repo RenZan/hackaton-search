@@ -17,13 +17,13 @@ logging.basicConfig(level=log_level, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 # Configuration des URLs des APIs
-SEARXNG_API_URL = "http://10.13.0.5:8081/search"
-CRAWL4AI_API_URL = "http://10.13.0.5:11235/crawl"
-CRAWL4AI_TASK_URL = "http://10.13.0.5:11235/task"
+SEARXNG_API_URL = "http://127.0.0.1:8081/search"
+CRAWL4AI_API_URL = "http://127.0.0.1:11235/crawl"
+CRAWL4AI_TASK_URL = "http://127.0.0.1:11235/task"
 
 # Configuration pour Azure OpenAI
-API_KEY = ""
-OPENAI_ENDPOINT = "https://openai.renzan.fr/v1/chat/completions"
+API_KEY = "F1DWSBrZZ7yQLwSccaXlSqdhFN3cQMs0S9yP7HsprLByPY104sXeJQQJ99BCACHYHv6XJ3w3AAAAACOGb6YV"
+OPENAI_ENDPOINT = "https://htngu-m85uc1r5-eastus2.cognitiveservices.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-10-21"
 
 # Token d'authentification pour Crawl4AI
 CRAWL4AI_API_TOKEN = "toto"
@@ -142,8 +142,8 @@ def analyze_chunk(chunk, query, initial_query, start_time=None, time_limit=None,
     logger.info(f"[LLM] Analyse d'un chunk de longueur {len(chunk)} pour '{query}'")
     system_prompt = (
         f"Tu es un expert en recherche. La date actuelle est {CURRENT_DATE}. Analyse le texte suivant et extrais jusqu'à 3 faits ou données factuelles clés "
-        f"en rapport direct avec le sujet initial '{initial_query}'. Chaque fait doit être concis, précis, pertinent à {CURRENT_DATE}, et unique. Un fait ne doit pas être une url, ça doit être une information de qualité. "
-        f"Retourne les urls sources et les faits associés à l'url source dans un format structuré."
+        f"en rapport direct avec le sujet initial '{initial_query}'. Chaque fait doit être développé, sourcé, précis, pertinent à {CURRENT_DATE}, et unique. Un fait ne doit pas être une url, ça doit être une information de qualité. "
+        f"Retourne les urls sources et les faits associés à l'url source dans un tableau"
     )
     user_prompt = f"Texte :\n{chunk}"
     payload = {
@@ -284,6 +284,7 @@ def deep_research(initial_query, breadth=3, depth=3, time_limit=180):
         queries_to_explore.extend(new_queries[:2])
 
     all_learnings = list(dict.fromkeys([fact for data in current_knowledge.values() for fact in data["learnings"]]))
+    logger.info(all_learnings)
     report = generate_report(initial_query, all_learnings)
     
     logger.info("\n### Données Structurées ###")
@@ -295,16 +296,17 @@ def deep_research(initial_query, breadth=3, depth=3, time_limit=180):
 # Génération du rapport
 def generate_report(initial_query, all_learnings):
     system_prompt = (
-        f"Tu es un expert en rédaction. La date actuelle est {CURRENT_DATE}. Rédige un rapport synthétique et structuré répondant à '{initial_query}', "
+        f"Tu es un expert en rédaction. La date actuelle est {CURRENT_DATE}. Rédige un rapport synthétique et structuré répondant à '{initial_query}', à destination d'un décideur de l'entreprise "
         f"basé sur les informations suivantes, pertinentes à {CURRENT_DATE}. Ajoute une synthèse finale."
     )
-    user_prompt = f"Informations :\n" + "\n".join([f"- {learning}" for learning in all_learnings]) + "\n\nFormat : Intro + points numérotés."
+    user_prompt = f"Informations :\n" + "\n".join([f"- {learning}" for learning in all_learnings]) + "\n\nFormat : Très brève introduction + points numérotés avec citations des sources numérotées URL utilisées en bas de page avec une référence renvoyant vers la source, la source doit être l'url complète vers l'article, pas juste le nom de domaine."
+    logger.info(user_prompt)
     payload = {
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ],
-        "max_tokens": 10000,
+        "max_tokens": 4096,
         "temperature": 0.7
     }
     headers = {"Content-Type": "application/json", "api-key": API_KEY}
@@ -319,7 +321,7 @@ def generate_report(initial_query, all_learnings):
 if __name__ == "__main__":
     try:
         initial_query = input("Entrez le sujet de recherche initial : ")
-        structured_data, report = deep_research(initial_query, breadth=5, depth=5, time_limit=100)
+        structured_data, report = deep_research(initial_query, breadth=5, depth=5, time_limit=180)
         print("\n### Données Structurées ###")
         print(json.dumps(structured_data, indent=4, ensure_ascii=False))
         print("\n### Rapport Final ###")
