@@ -311,9 +311,9 @@ def deep_research(initial_query, breadth=3, depth=3, time_limit=180):
         new_queries = generate_new_queries(current_knowledge, initial_query, start_time, time_limit)
         queries_to_explore.extend(new_queries[:2])
 
-    all_learnings = list(dict.fromkeys([fact for data in current_knowledge.values() for fact in data["learnings"]]))
+    all_learnings = [fact for data in current_knowledge.values() for fact in data["learnings"]]
     logger.info(all_learnings)
-    report = generate_report(initial_query, all_learnings)
+    report = generate_report(initial_query, all_learnings, current_knowledge)
     
     logger.info("\n### Données Structurées ###")
     logger.info(json.dumps(current_knowledge, indent=4, ensure_ascii=False))
@@ -322,12 +322,49 @@ def deep_research(initial_query, breadth=3, depth=3, time_limit=180):
     return current_knowledge, report
 
 # Génération du rapport
-def generate_report(initial_query, all_learnings):
-    system_prompt = (
-        f"Tu es un expert en rédaction. La date actuelle est {CURRENT_DATE}. Rédige un rapport synthétique et structuré répondant à '{initial_query}', à destination d'un décideur de l'entreprise "
-        f"basé sur les informations suivantes, pertinentes à {CURRENT_DATE}. Ajoute une synthèse finale."
+def generate_report(initial_query, all_learnings, knowledge):
+    # Construction d'une correspondance entre chaque fait et sa/ces source(s)
+    fact_sources = {}
+    for url, data in knowledge.items():
+        for fact in data["learnings"]:
+            if fact not in fact_sources:
+                fact_sources[fact] = []
+            if url not in fact_sources[fact]:
+                fact_sources[fact].append(url)
+                
+    # Création d'une liste ordonnée des sources uniques (en préservant l'ordre d'apparition)
+    unique_sources = []
+    for url in knowledge.keys():
+        if url not in unique_sources:
+            unique_sources.append(url)
+    
+    # Pour chaque fait, on détermine les numéros de référence correspondants
+    facts_with_refs = []
+    for fact in all_learnings:
+        sources = fact_sources.get(fact, [])
+        ref_numbers = [str(unique_sources.index(src) + 1) for src in sources if src in unique_sources]
+        ref_str = ", ".join(ref_numbers)
+        facts_with_refs.append(f"{fact} [Ref: {ref_str}]" if ref_str else fact)
+    
+    # Préparation du prompt en ajoutant la liste des faits et la liste des sources en pied de page
+    facts_text = "\n".join([f"- {fact}" for fact in facts_with_refs])
+    sources_text = "\n".join([f"{i+1}. {src}" for i, src in enumerate(unique_sources)])
+    
+    user_prompt = (
+        f"Informations :\n{facts_text}\n\n"
+        "Format : Très brève introduction + points numérotés pour chaque fait. "
+        "Pour chaque point, ajoute une référence numérotée indiquant la source de l'information, "
+        "et en bas du rapport, liste les sources complètes en indiquant leur numéro. "
+        "La source doit être l'URL complète vers l'article, pas seulement le nom de domaine.\n\n"
+        f"Sources :\n{sources_text}"
     )
-    user_prompt = f"Informations :\n" + "\n".join([f"- {learning}" for learning in all_learnings]) + "\n\nFormat : Très brève introduction + points numérotés avec citations des sources numérotées URL utilisées en bas de page avec une référence renvoyant vers la source, la source doit être l'url complète vers l'article, pas juste le nom de domaine."
+    
+    system_prompt = (
+        f"Tu es un expert en rédaction. La date actuelle est {CURRENT_DATE}. "
+        f"Rédige un rapport synthétique et structuré répondant à '{initial_query}', à destination d'un décideur de l'entreprise "
+        f"basé sur les informations fournies, pertinentes à {CURRENT_DATE}. "
+        "Ajoute une synthèse finale."
+    )
     logger.info(user_prompt)
     payload = {
         "messages": [
@@ -344,6 +381,7 @@ def generate_report(initial_query, all_learnings):
     except requests.RequestException as e:
         logger.error(f"[LLM] Erreur lors de la génération du rapport : {e}")
         return "Échec de la génération du rapport."
+
 
 # Point d'entrée
 if __name__ == "__main__":
@@ -362,7 +400,7 @@ if __name__ == "__main__":
         # Log de la requête reçue
         logger.info(f"Requête reçue : {initial_query}")
         # Simuler une recherche approfondie
-        structured_data, report = deep_research(initial_query, breadth=3, depth=1, time_limit=60)
+        structured_data, report = deep_research(initial_query, breadth=5, depth=2, time_limit=120)
         # Afficher les résultats
         print("\n### Données Structurées ###")
         print(json.dumps(structured_data, indent=4, ensure_ascii=False))
